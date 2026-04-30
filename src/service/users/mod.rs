@@ -57,6 +57,12 @@ impl HashedPassword {
 	}
 }
 
+/// The status of an access token.
+pub enum AccessTokenStatus {
+	Valid,
+	Expired,
+}
+
 pub struct Service {
 	services: Services,
 	db: Data,
@@ -349,7 +355,10 @@ impl Service {
 	pub async fn count(&self) -> usize { self.db.userid_password.count().await }
 
 	/// Find out which user an access token belongs to.
-	pub async fn find_from_token(&self, token: &str) -> Option<(OwnedUserId, OwnedDeviceId)> {
+	pub async fn find_from_token(
+		&self,
+		token: &str,
+	) -> Option<(OwnedUserId, OwnedDeviceId, AccessTokenStatus)> {
 		let user = self
 			.db
 			.token_userdeviceid
@@ -359,11 +368,11 @@ impl Service {
 			.ok();
 
 		// Check if the token has expired
-		if let Some(user) = &user {
+		if let Some((user_id, device_id)) = user {
 			if let Some(expires) = self
 				.db
 				.userdeviceid_tokenexpires
-				.qry(user)
+				.qry(&(&user_id, &device_id))
 				.await
 				.deserialized::<u64>()
 				.ok()
@@ -374,12 +383,14 @@ impl Service {
 					.expect("expiry time should not overflow SystemTime");
 
 				if SystemTime::now() > expires_at {
-					return None;
+					return Some((user_id, device_id, AccessTokenStatus::Expired));
 				}
 			}
-		}
 
-		user
+			Some((user_id, device_id, AccessTokenStatus::Valid))
+		} else {
+			None
+		}
 	}
 
 	/// Returns an iterator over all users on this homeserver.
