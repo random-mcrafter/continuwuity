@@ -270,6 +270,13 @@ pub(crate) async fn deactivate_route(
 		.as_ref()
 		.ok_or_else(|| err!(Request(MissingToken("Missing access token."))))?;
 
+	if !services.config.allow_deactivation {
+		return Err!(Request(Unauthorized(
+			"You may not deactivate your own account. Contact your server's administrator for \
+			 assistance."
+		)));
+	}
+
 	// Prompt the user to confirm with their password using UIAA
 	let _ = services
 		.uiaa
