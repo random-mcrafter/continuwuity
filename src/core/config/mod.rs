@@ -676,6 +676,7 @@ pub struct Config {
 	/// to `false`.
 	///
 	/// default: true
+	#[serde(default = "true_fn")]
 	pub allow_deactivation: bool,
 
 	/// Controls whether encrypted rooms and events are allowed.
