@@ -29,7 +29,6 @@ use ruma::{
 	},
 	assign,
 };
-use service::uiaa::Identity;
 
 use super::{DEVICE_ID_LENGTH, TOKEN_LENGTH};
 use crate::Ruma;
@@ -44,6 +43,12 @@ pub(crate) async fn get_login_types_route(
 	ClientIp(client): ClientIp,
 	_body: Ruma<get_login_types::v3::Request>,
 ) -> Result<get_login_types::v3::Response> {
+	if !services.config.oauth.compatibility_mode.uiaa_available() {
+		return Err!(Request(Unrecognized(
+			"User-interactive authentication is not available on this server."
+		)));
+	}
+
 	Ok(get_login_types::v3::Response::new(vec![
 		get_login_types::v3::LoginType::Password(PasswordLoginType::default()),
 		get_login_types::v3::LoginType::ApplicationService(ApplicationServiceLoginType::default()),
@@ -53,7 +58,7 @@ pub(crate) async fn get_login_types_route(
 	]))
 }
 
-pub(crate) async fn handle_login(
+pub async fn handle_login(
 	services: &Services,
 	identifier: Option<&UserIdentifier>,
 	password: &str,
@@ -119,10 +124,15 @@ pub(crate) async fn login_route(
 	ClientIp(client): ClientIp,
 	body: Ruma<login::v3::Request>,
 ) -> Result<login::v3::Response> {
+	if !services.config.oauth.compatibility_mode.uiaa_available() {
+		return Err!(Request(Unrecognized(
+			"User-interactive authentication is not available on this server."
+		)));
+	}
+
 	let emergency_mode_enabled = services.config.emergency_password.is_some();
 
 	// Validate login method
-	// TODO: Other login methods
 	let user_id = match &body.login_info {
 		#[allow(deprecated)]
 		| login::v3::LoginInfo::Password(login::v3::Password {
@@ -203,7 +213,7 @@ pub(crate) async fn login_route(
 	if device_exists {
 		services
 			.users
-			.set_token(&user_id, &device_id, &token)
+			.set_token(&user_id, &device_id, &token, None)
 			.await?;
 	} else {
 		services
@@ -212,6 +222,7 @@ pub(crate) async fn login_route(
 				&user_id,
 				&device_id,
 				&token,
+				None,
 				body.initial_device_display_name.clone(),
 				Some(client.to_string()),
 			)
@@ -259,7 +270,7 @@ pub(crate) async fn login_token_route(
 	// Prompt the user to confirm with their password using UIAA
 	let _ = services
 		.uiaa
-		.authenticate_password(&body.auth, Some(Identity::from_user_id(sender_user)))
+		.authenticate_password(&body.auth, sender_user, body.sender_device(), None)
 		.await?;
 
 	let login_token = utils::random_string(TOKEN_LENGTH);

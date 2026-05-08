@@ -24,7 +24,7 @@ use ruma::{
 		power_levels::RoomPowerLevelsEventContent,
 	},
 };
-use service::{mailer::messages, uiaa::Identity, users::HashedPassword};
+use service::{mailer::messages, uiaa::UiaaInitiator, users::HashedPassword};
 
 use super::{DEVICE_ID_LENGTH, TOKEN_LENGTH};
 use crate::Ruma;
@@ -121,7 +121,7 @@ pub(crate) async fn change_password_route(
 				&body.auth,
 				vec![AuthFlow::new(vec![AuthType::Password])],
 				Box::default(),
-				Some(Identity::from_user_id(user_id)),
+				Some(UiaaInitiator::new(user_id, body.sender_device())),
 			)
 			.await?
 	} else {
@@ -270,10 +270,17 @@ pub(crate) async fn deactivate_route(
 		.as_ref()
 		.ok_or_else(|| err!(Request(MissingToken("Missing access token."))))?;
 
+	if !services.config.allow_deactivation {
+		return Err!(Request(Unauthorized(
+			"You may not deactivate your own account. Contact your server's administrator for \
+			 assistance."
+		)));
+	}
+
 	// Prompt the user to confirm with their password using UIAA
 	let _ = services
 		.uiaa
-		.authenticate_password(&body.auth, Some(Identity::from_user_id(sender_user)))
+		.authenticate_password(&body.auth, sender_user, body.sender_device(), None)
 		.await?;
 
 	// Remove profile pictures and display name
