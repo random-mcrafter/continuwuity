@@ -125,6 +125,7 @@ struct CompletedRegistration {
 	next: Option<LoginTarget>,
 }
 
+#[allow(clippy::large_futures)]
 async fn route_register(
 	State(services): State<crate::State>,
 	Extension(context): Extension<TemplateContext>,
