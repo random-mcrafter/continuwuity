@@ -14,14 +14,14 @@ mod upgrade_outlier_pdu;
 use std::{collections::HashMap, fmt::Write, sync::Arc, time::Instant};
 
 use async_trait::async_trait;
-use conduwuit::{Err, Event, PduEvent, Result, Server, SyncRwLock, utils::MutexMap};
+use conduwuit::{utils::MutexMap, Err, Event, PduEvent, Result, Server, SyncRwLock};
 use ruma::{
-	OwnedEventId, OwnedRoomId, RoomId, events::room::create::RoomCreateEventContent,
-	room_version_rules::RoomVersionRules,
+	events::room::create::RoomCreateEventContent, room_version_rules::RoomVersionRules, OwnedEventId, OwnedRoomId,
+	RoomId,
 };
 
-use crate::{Dep, globals, rooms, sending, server_keys};
-
+use crate::{globals, rooms, sending, server_keys, Dep};
+pub use fetch_and_handle_outliers::build_local_dag;
 pub struct Service {
 	pub mutex_federation: RoomMutexMap,
 	pub federation_handletime: SyncRwLock<HandleTimeMap>,

@@ -1,10 +1,9 @@
-use std::collections::{HashMap, hash_map};
+use std::collections::{hash_map, HashMap};
 
-use conduwuit::{Err, Event, Result, debug, debug_warn, err, implement};
-use futures::FutureExt;
+use conduwuit::{debug, debug_warn, err, implement, Err, Event, Result};
 use ruma::{
-	EventId, OwnedEventId, RoomId, ServerName, api::federation::event::get_room_state_ids,
-	events::StateEventType,
+	api::federation::event::get_room_state_ids, events::StateEventType, EventId, OwnedEventId, RoomId,
+	ServerName,
 };
 
 use crate::rooms::short::ShortStateKey;
@@ -42,7 +41,6 @@ where
 	let state_ids = res.pdu_ids.iter().map(AsRef::as_ref);
 	let state_vec = self
 		.fetch_and_handle_outliers(origin, state_ids, create_event, room_id)
-		.boxed()
 		.await;
 
 	let mut state: HashMap<ShortStateKey, OwnedEventId> = HashMap::with_capacity(state_vec.len());

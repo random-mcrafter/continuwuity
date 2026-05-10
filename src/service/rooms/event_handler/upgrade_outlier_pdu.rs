@@ -1,20 +1,14 @@
+use conduwuit::{debug, debug_info, debug_warn, err, error, implement, is_equal_to, matrix::{state_res, Event, EventTypeExt, PduEvent, StateKey}, trace, utils::{
+	stream::{BroadbandExt, ReadyExt},
+	IterStream,
+}, warn, Err, Result};
+use futures::{future::ready, FutureExt, StreamExt};
+use ruma::{events::StateEventType, CanonicalJsonValue, OwnedEventId, RoomId, ServerName};
+use std::collections::{HashMap, HashSet};
 use std::{borrow::Borrow, collections::BTreeMap, sync::Arc, time::Instant};
-
-use conduwuit::{
-	Err, Result, debug, debug_info, debug_warn, err, implement, is_equal_to,
-	matrix::{Event, EventTypeExt, PduEvent, StateKey, state_res},
-	trace,
-	utils::{
-		IterStream,
-		stream::{BroadbandExt, ReadyExt},
-	},
-	warn,
-};
-use futures::{FutureExt, StreamExt, future::ready};
-use ruma::{CanonicalJsonValue, RoomId, ServerName, events::StateEventType};
 use tokio::join;
 
-use super::get_room_version_rules;
+use super::{build_local_dag, get_room_version_rules};
 use crate::rooms::{
 	state_compressor::{CompressedState, HashSetCompressStateEvent},
 	timeline::RawPduId,

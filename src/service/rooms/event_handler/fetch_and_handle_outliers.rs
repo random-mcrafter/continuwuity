@@ -1,21 +1,87 @@
 use std::{
 	cmp::min,
-	collections::{BTreeMap, HashMap, HashSet, VecDeque, hash_map},
+	collections::{hash_map, BTreeMap, HashMap, HashSet, VecDeque},
 	time::Instant,
 };
 
+use super::get_room_version_rules;
+use conduwuit::state_res::lexicographical_topological_sort;
 use conduwuit::{
-	Err, Event, PduEvent, debug, debug_info, debug_warn, err,
-	matrix::event::gen_event_id_canonical_json, trace, utils::continue_exponential_backoff_secs,
-	warn,
+	debug, debug_info, debug_warn, err, matrix::event::gen_event_id_canonical_json, trace, utils::continue_exponential_backoff_secs,
+	warn, Err, Event,
+	PduEvent,
 };
 use futures::StreamExt;
-use ruma::{
-	CanonicalJsonValue, EventId, OwnedEventId, OwnedRoomId, OwnedServerName, RoomId, ServerName,
-	api::federation::event::{get_event, get_missing_events},
-};
+use itertools::Itertools;
+use ruma::{api::federation::event::{get_event, get_missing_events}, int, CanonicalJsonObject, CanonicalJsonValue, EventId, MilliSecondsSinceUnixEpoch, OwnedEventId, OwnedRoomId, OwnedServerName, RoomId, ServerName, UInt};
 
-use super::get_room_version_rules;
+/// Attempts to build a localised directed acyclic graph out of the given PDUs,
+/// returning them in a topologically sorted order.
+///
+/// This is used to attempt to process PDUs in an order that respects their
+/// dependencies, however it is ultimately the sender's responsibility to send
+/// them in a processable order, so this is just a best effort attempt. It does
+/// not account for power levels or other tie breaks.
+pub async fn build_local_dag(
+	pdu_map: &HashMap<OwnedEventId, CanonicalJsonObject>,
+) -> conduwuit::Result<Vec<OwnedEventId>> {
+	debug_assert!(pdu_map.len() >= 2, "needless call to build_local_dag with less than 2 PDUs");
+	let mut dag: HashMap<OwnedEventId, HashSet<OwnedEventId>> =
+		HashMap::with_capacity(pdu_map.len());
+	let mut id_origin_ts: HashMap<OwnedEventId, _> = HashMap::with_capacity(pdu_map.len());
+
+	for (event_id, value) in pdu_map {
+		// We already checked that these properties are correct in parse_incoming_pdu,
+		// so it's safe to unwrap here.
+		// We also filter to remove any prev_events that are not in this pdu_map, as we
+		// need to have at least one event with zero out degrees for the lexico-topo
+		// sort below. If there are multiple events with omitted prevs, they will be
+		// ordered by timestamp, then event ID. At that point though, it's unlikely to
+		// matter.
+		let prev_events = value
+			.get("prev_events")
+			.unwrap()
+			.as_array()
+			.unwrap()
+			.iter()
+			.map(|v| EventId::parse(v.as_str().unwrap()).unwrap())
+			.filter(|id| pdu_map.contains_key(id))
+			.collect();
+
+		dag.insert(event_id.clone(), prev_events);
+		let origin_server_ts = value
+			.get("origin_server_ts")
+			.and_then(CanonicalJsonValue::as_integer)
+			.unwrap_or_default();
+		id_origin_ts.insert(event_id.clone(), origin_server_ts);
+	}
+
+	debug!(count = dag.len(), "Sorting incoming events with partial graph");
+	lexicographical_topological_sort(&dag, &async |node_id| {
+		// Note: we don't bother fetching power levels because that would massively slow
+		// this function down. This is a best-effort attempt to order events correctly
+		// for processing, however ultimately that should be the sender's job.
+		let ts = id_origin_ts
+			.get(&node_id)
+			.copied()
+			.unwrap_or_else(|| int!(0))
+			.to_string()
+			.parse::<u64>()
+			.ok()
+			.and_then(UInt::new)
+			.unwrap_or_default();
+		Ok((int!(0), MilliSecondsSinceUnixEpoch(ts)))
+	})
+		.await
+		.inspect(|sorted| {
+			debug_assert_eq!(
+				sorted.len(),
+				pdu_map.len(),
+				"Sorted graph was not the same size as the input graph"
+			);
+		})
+		.map_err(|e| err!("failed to resolve local graph: {e}"))
+}
 
 impl super::Service {
 	/// Uses `/_matrix/federation/v1/get_missing_events` to fill gaps in the
@@ -45,22 +111,23 @@ impl super::Service {
 			.await;
 		// TODO: min_depth is probably necessary to avoid fetching the entire room
 		// history if there are very long gaps
-		let mut latest_events = latest_events;
+		let mut latest_events: HashSet<OwnedEventId> = HashSet::from_iter(latest_events);
 		let mut loop_count: u64 = 3;
 		// Start with a base number of 3 so that we fetch 10, 16, 25, 36, etc
 		// instead of 1, 2, 4, 9, so on.
 		let mut backfilled_events = HashMap::with_capacity(10);
 
 		while !latest_events.is_empty() {
+			let todo: Vec<OwnedEventId> = latest_events.clone().into_iter().collect();
 			let mut request = get_missing_events::v1::Request::new(
 				room_id.clone(),
 				earliest_events.clone(),
-				latest_events.clone(),
+				todo.clone(),
 			);
 			request.limit = min(loop_count.saturating_pow(2), 100)
 				.try_into()
 				.expect("limit cannot be greater than 100, which fits into UInt");
-			if backfilled_events.len() > 1000 {
+			if backfilled_events.len() > self.services.server.config.max_fetch_prev_events as usize {
 				warn!(
 					"Received {} missing events, refusing to fetch more (infinite loop?)",
 					backfilled_events.len()
@@ -100,47 +167,64 @@ impl super::Service {
 				break;
 			}
 			for event in response.events {
+				trace!("Parsing incoming event from backfill");
 				let (incoming_room_id, event_id, pdu_json) =
 					self.parse_incoming_pdu(&event).await.map_err(|e| {
 						err!(BadServerResponse("{via} returned an invalid event: {e:?}"))
 					})?;
+				trace!(%incoming_room_id, %event_id, "Parsed incoming event from backfill");
 				if incoming_room_id != room_id {
 					return Err!(BadServerResponse(
 						"{via} returned {event_id} in missing events which belongs to \
 						 {incoming_room_id}, not {room_id}"
 					));
 				}
+				latest_events.remove(&event_id);
 				if backfilled_events.contains_key(&event_id) {
 					debug_warn!(%via, %event_id, "Remote retransmitted event");
 					continue;
 				}
 				// TODO: Should this be scoped to the GME session? We might end up incorrectly
 				// assuming we've caught up if we do this
-				if self.services.timeline.pdu_exists(&event_id).await {
+				if let Ok(pdu) = self.services.timeline.get_pdu(&event_id).await {
 					debug!(%via, %event_id, "Already seen event in database");
-					continue;
+					backfilled_events.insert(event_id.clone(), pdu);
+				} else {
+					unseen = unseen.saturating_add(1);
 				}
-				unseen = unseen.saturating_add(1);
 				let parsed = PduEvent::from_id_val(&event_id, pdu_json)
 					.map_err(|e| err!(BadServerResponse("Unable to parse {event_id}: {e}")))?;
-				backfilled_events.insert(event_id, parsed.clone());
 				for prev_event_id in parsed.prev_events() {
-					if backfilled_events.contains_key(prev_event_id)
-						|| self.services.timeline.pdu_exists(prev_event_id).await
+					// Verify that we have all of this event's prev_events. If we don't, add it to
+					// the work queue
+					if !(backfilled_events.contains_key(prev_event_id) && self.services.timeline.pdu_exists(prev_event_id).await)
 					{
-						continue;
+						latest_events.insert(event_id);
+						break
 					}
-					latest_events.push(prev_event_id.to_owned());
-				}
+     				continue
+				};
 			}
-			latest_events.retain(|e| !backfilled_events.contains_key(e));
+			for event_id in todo {
+				latest_events.remove(&event_id);
+				if let hash_map::Entry::Vacant(e) = backfilled_events.entry(event_id.clone()) {
+					let evt = self.services.timeline.get_pdu(&event_id).await?;
+					e.insert(evt);
+				}
+			};
 			debug!(
-				chunk=%chunk_len,
+				count=%chunk_len,
+				new=%unseen,
 				remaining=%latest_events.len(),
 				"Got missing events"
 			);
+			if unseen == 0 {
+				debug_warn!("Didn't see any new events, breaking cycle");
+				break
+			}
 		}
 
+		debug_info!("Successfully fetched {} missing events from {via}", backfilled_events.len());
 		Ok(backfilled_events)
 	}
 
