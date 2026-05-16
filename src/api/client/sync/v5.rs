@@ -702,7 +702,7 @@ async fn collect_required_state(
 	sender_user: &UserId,
 	room_id: &RoomId,
 	required_state_request: &BTreeSet<TypeStateKey>,
-	timeline_pdus: &VecDeque<(PduCount, impl Event)>,
+	timeline_pdus: &VecDeque<(PduCount, impl Event + Sync)>,
 ) -> Vec<Raw<AnySyncStateEvent>> {
 	let mut required_state = Vec::new();
 	let mut wildcard_types: HashSet<&StateEventType> = HashSet::new();
