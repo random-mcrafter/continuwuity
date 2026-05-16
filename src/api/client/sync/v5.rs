@@ -538,8 +538,14 @@ where
 				}
 			});
 
-		let required_state =
-			collect_required_state(services, sender_user, room_id, required_state_request, &timeline_pdus).await;
+		let required_state = collect_required_state(
+			services,
+			sender_user,
+			room_id,
+			required_state_request,
+			&timeline_pdus,
+		)
+		.await;
 
 		let room_events: Vec<_> = timeline_pdus
 			.iter()
