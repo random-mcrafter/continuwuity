@@ -728,7 +728,7 @@ async fn collect_required_state(
 					.await
 				{
 					for key in keys {
-						if !fetched.insert((event_type.clone(), key.to_string())) {
+						if !fetched.insert((event_type.clone(), key.clone())) {
 							continue;
 						}
 						if let Ok(event) = services
