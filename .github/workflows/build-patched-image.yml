@@ -1,0 +1,268 @@
+name: Build Patched Image
+
+on:
+  push:
+    branches:
+      - main
+    paths-ignore:
+      - "*.md"
+      - "**/*.md"
+      - "*.mdx"
+      - "**/*.mdx"
+      - "changelog.d/**"
+      - ".gitignore"
+      - "renovate.json"
+      - "docs/**"
+  schedule:
+    - cron: '0 2 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  packages: write
+
+jobs:
+  clippy-push:
+    name: Clippy
+    runs-on: ubuntu-24.04-arm
+    if: github.event_name == 'push'
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y liburing-dev pkg-config
+
+      - name: Set up sccache
+        uses: mozilla-actions/sccache-action@v0.0.10
+
+      - name: Install Rust toolchain
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          components: clippy
+          rustflags: ""
+
+      - name: Run Clippy
+        env:
+          SCCACHE_GHA_ENABLED: "true"
+          RUSTC_WRAPPER: sccache
+        run: cargo clippy --no-default-features --features default 2>&1 | tee /tmp/clippy-output.txt
+        shell: bash
+
+      - name: Upload Clippy output
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: clippy-output
+          path: /tmp/clippy-output.txt
+          retention-days: 7
+
+      - name: Notify Clippy failure
+        if: failure()
+        run: |
+          TRUNCATED=$(grep "^error" /tmp/clippy-output.txt | head -20 | cut -c1-3000)
+          curl -s -X POST \
+            -H "Content-Type: application/json" \
+            -d "{
+              \"embeds\": [{
+                \"title\": \"Clippy failed\",
+                \"description\": \"Run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}\",
+                \"fields\": [{
+                  \"name\": \"Errors (first 20)\",
+                  \"value\": \"\`\`\`\n${TRUNCATED}\n\`\`\`\"
+                }],
+                \"color\": 15158332
+              }]
+            }" \
+            "${{ secrets.DISCORD_WEBHOOK_URL }}"
+
+  sync:
+    name: Sync with upstream
+    runs-on: ubuntu-24.04-arm
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    outputs:
+      sha: ${{ steps.upstream.outputs.sha }}
+      changed: ${{ steps.check.outputs.changed }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Configure git identity
+        run: |
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git config user.name "github-actions[bot]"
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Find last successful upstream commit via their image
+        id: upstream
+        run: |
+          SHA=$(docker buildx imagetools inspect \
+            forgejo.ellis.link/continuwuation/continuwuity:main-maxperf \
+            --raw | \
+            jq -r '.annotations["org.opencontainers.image.revision"] // empty')
+
+          if [ -z "$SHA" ]; then
+            echo "Could not read SHA from upstream image, aborting"
+            exit 1
+          fi
+
+          echo "sha=$SHA" >> $GITHUB_OUTPUT
+          echo "Syncing to upstream SHA: $SHA"
+
+      - name: Check if upstream SHA changed
+        id: check
+        run: |
+          CURRENT=$(git rev-parse HEAD)
+          if git merge-base --is-ancestor ${{ steps.upstream.outputs.sha }} HEAD; then
+            echo "changed=false" >> $GITHUB_OUTPUT
+            echo "Upstream SHA already in history, skipping build"
+          else
+            echo "changed=true" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Sync with upstream at last successful commit
+        if: steps.check.outputs.changed == 'true'
+        run: |
+          git remote add upstream https://github.com/continuwuity/continuwuity.git
+          git fetch upstream
+          git rebase ${{ steps.upstream.outputs.sha }}
+
+      - name: Restore own workflow files after rebase
+        if: steps.check.outputs.changed == 'true'
+        run: |
+          git checkout origin/main -- .github/
+          git diff --quiet && echo "No changes" || git commit --amend --no-edit
+
+      - name: Push synced main to fork
+        if: steps.check.outputs.changed == 'true'
+        run: git push --force origin HEAD:main
+
+  clippy-sync:
+    name: Clippy (post-sync)
+    runs-on: ubuntu-24.04-arm
+    needs: sync
+    if: needs.sync.outputs.changed == 'true'
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y liburing-dev pkg-config
+
+      - name: Set up sccache
+        uses: mozilla-actions/sccache-action@v0.0.10
+
+      - name: Install Rust toolchain
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          components: clippy
+          rustflags: ""
+
+      - name: Run Clippy
+        env:
+          SCCACHE_GHA_ENABLED: "true"
+          RUSTC_WRAPPER: sccache
+        run: cargo clippy --no-default-features --features default 2>&1 | tee /tmp/clippy-output.txt
+        shell: bash
+
+      - name: Upload Clippy output
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: clippy-output-sync
+          path: /tmp/clippy-output.txt
+          retention-days: 7
+
+      - name: Notify Clippy failure
+        if: failure()
+        run: |
+          TRUNCATED=$(grep "^error" /tmp/clippy-output.txt | head -20 | cut -c1-3000)
+          curl -s -X POST \
+            -H "Content-Type: application/json" \
+            -d "{
+              \"embeds\": [{
+                \"title\": \"Clippy failed after sync\",
+                \"description\": \"Run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}\",
+                \"fields\": [{
+                  \"name\": \"Errors (first 20)\",
+                  \"value\": \"\`\`\`\n${TRUNCATED}\n\`\`\`\"
+                }],
+                \"color\": 15158332
+              }]
+            }" \
+            "${{ secrets.DISCORD_WEBHOOK_URL }}"
+
+  build:
+    name: Build and push ARM64 (max-perf)
+    runs-on: ubuntu-24.04-arm
+    needs: [sync, clippy-sync]
+    if: needs.sync.outputs.changed == 'true'
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Get git metadata
+        id: meta
+        run: |
+          echo "sha=$(git rev-parse HEAD)" >> $GITHUB_OUTPUT
+          echo "sha_short=$(git rev-parse --short HEAD)" >> $GITHUB_OUTPUT
+          echo "timestamp=$(git log -1 --pretty=%ct)" >> $GITHUB_OUTPUT
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Build and push
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: docker/Dockerfile
+          platforms: linux/arm64
+          push: true
+          tags: |
+            ghcr.io/${{ github.repository_owner }}/continuwuity:main-maxperf
+            ghcr.io/${{ github.repository_owner }}/continuwuity:main
+          build-args: |
+            GIT_COMMIT_HASH=${{ steps.meta.outputs.sha }}
+            GIT_COMMIT_HASH_SHORT=${{ steps.meta.outputs.sha_short }}
+            GIT_REMOTE_URL=${{ github.server_url }}/${{ github.repository }}
+            CARGO_INCREMENTAL=0
+            TARGET_CPU=
+            RUST_PROFILE=release-max-perf
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+        env:
+          SOURCE_DATE_EPOCH: ${{ steps.meta.outputs.timestamp }}
+
+      - name: Notify build failure
+        if: failure()
+        run: |
+          curl -s -X POST \
+            -H "Content-Type: application/json" \
+            -d "{
+              \"embeds\": [{
+                \"title\": \"Docker build failed\",
+                \"description\": \"Run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}\",
+                \"color\": 15158332
+              }]
+            }" \
+            "${{ secrets.DISCORD_WEBHOOK_URL }}"
