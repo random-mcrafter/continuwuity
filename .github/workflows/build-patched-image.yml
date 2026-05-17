@@ -121,29 +121,39 @@ jobs:
       - name: Check if upstream SHA changed
         id: check
         run: |
-          CURRENT=$(git rev-parse HEAD)
           if git merge-base --is-ancestor ${{ steps.upstream.outputs.sha }} HEAD; then
-            echo "changed=false" >> $GITHUB_OUTPUT
-            echo "Upstream SHA already in history, skipping build"
+            echo "upstream_changed=false" >> $GITHUB_OUTPUT
+            echo "Upstream code is already integrated."
+            UPSTREAM_CHANGED="false"
           else
+            echo "upstream_changed=true" >> $GITHUB_OUTPUT
+            echo "New upstream updates detected."
+            UPSTREAM_CHANGED="true"
+          fi
+
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ] || [ "$UPSTREAM_CHANGED" = "true" ]; then
             echo "changed=true" >> $GITHUB_OUTPUT
+            echo "Proceeding with build/test steps."
+          else
+            echo "changed=false" >> $GITHUB_OUTPUT
+            echo "Skipping build/test steps."
           fi
 
       - name: Sync with upstream at last successful commit
-        if: steps.check.outputs.changed == 'true'
+        if: steps.check.outputs.upstream_changed == 'true'
         run: |
           git remote add upstream https://github.com/continuwuity/continuwuity.git
           git fetch upstream
           git rebase ${{ steps.upstream.outputs.sha }}
 
       - name: Restore own workflow files after rebase
-        if: steps.check.outputs.changed == 'true'
+        if: steps.check.outputs.upstream_changed == 'true'
         run: |
           git checkout origin/main -- .github/
           git diff --quiet && echo "No changes" || git commit --amend --no-edit
 
       - name: Push synced main to fork
-        if: steps.check.outputs.changed == 'true'
+        if: steps.check.outputs.upstream_changed == 'true'
         run: git push --force origin HEAD:main
 
   clippy-sync:
