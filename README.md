@@ -1,3 +1,11 @@
+> [!IMPORTANT]
+> 
+> As I will not use continuwuity for my homeserver anymore this fork will be archived.
+
+> [!NOTE]
+>
+> The only addition here is a fix to notifications not making a sound in Element X. It unfortunately does not seem to work for all users.
+> It is mostly just [this pull request](https://forgejo.ellis.link/continuwuation/continuwuity/pulls/1690).
 # continuwuity
 
 <!-- ANCHOR: catchphrase -->
