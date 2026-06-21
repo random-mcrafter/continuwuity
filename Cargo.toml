@@ -12,7 +12,7 @@ license = "Apache-2.0"
 # See also `rust-toolchain.toml`
 readme = "README.md"
 repository = "https://forgejo.ellis.link/continuwuation/continuwuity"
-version = "0.5.9"
+version = "26.6.0-alpha.1"
 
 [workspace.metadata.crane]
 name = "conduwuit"
@@ -39,10 +39,10 @@ features = ["ffi", "std", "union"]
 version = "1.1.0"
 
 [workspace.dependencies.ctor]
-version = "0.13.0"
+version = "1.0.6"
 
 [workspace.dependencies.dtor]
-version = "0.13.0"
+version = "1.0.0"
 
 [workspace.dependencies.cargo_toml]
 version = "0.22"
@@ -164,7 +164,7 @@ features = ["raw_value"]
 
 # Used for appservice registration files
 [workspace.dependencies.serde-saphyr]
-version = "0.0.26"
+version = "0.0.27"
 
 # Used to load forbidden room/user regex from config
 [workspace.dependencies.serde_regex]
@@ -296,7 +296,7 @@ default-features = false
 features = ["env", "toml"]
 
 [workspace.dependencies.hickory-resolver]
-version = "0.25.2"
+version = "0.26.0"
 default-features = false
 features = [
     "serde",
@@ -344,7 +344,7 @@ version = "1.1.1"
 [workspace.dependencies.ruma]
 # version = "0.14.1"
 git = "https://github.com/ruma/ruma.git"
-rev = "9c9dccc93f054bbd28f23f630223fffa6289ecbc"
+rev = "3ecd80b92794d2d93f657a7b3db62d4be237526b"
 features = [
     "appservice-api-c",
     "client-api",
@@ -373,18 +373,18 @@ features = [
     "unstable-msc4195",
     "unstable-msc4203",
     "unstable-msc4310",
-    "unstable-msc4373",
     "unstable-msc4380",
     "unstable-msc4143",
     "unstable-msc4293",
     "unstable-msc4406",
     "unstable-msc4439",
+    "unstable-msc4466",
     "unstable-extensible-events",
 ]
 
 [workspace.dependencies.rust-rocksdb]
 git = "https://forgejo.ellis.link/continuwuation/rust-rocksdb-zaidoon1"
-rev = "31fb8f772c7afcdc0061ab6a40cfa3a1be2fccd9"
+rev = "0a25ff92f7c09b55eec496b9c192c7d5136ab2b8"
 default-features = false
 features = [
     "multi-threaded-cf",
@@ -404,20 +404,20 @@ default-features = false
 
 # optional opentelemetry, performance measurements, flamegraphs, etc for performance measurements and monitoring
 [workspace.dependencies.opentelemetry]
-version = "0.31.0"
+version = "0.32.0"
 
 [workspace.dependencies.tracing-flame]
 version = "0.2.0"
 
 [workspace.dependencies.tracing-opentelemetry]
-version = "0.32.0"
+version = "0.33.0"
 
 [workspace.dependencies.opentelemetry_sdk]
-version = "0.31.0"
+version = "0.32.0"
 features = ["rt-tokio"]
 
 [workspace.dependencies.opentelemetry-otlp]
-version = "0.31.0"
+version = "0.32.0"
 features = ["http", "grpc-tonic", "trace", "logs", "metrics"]
 
 
@@ -534,7 +534,7 @@ version = "2.1.1"
 features = ["std"]
 
 [workspace.dependencies.minicbor-serde]
-version = "0.6.0"
+version = "0.7.0"
 features = ["std"]
 
 [workspace.dependencies.maplit]

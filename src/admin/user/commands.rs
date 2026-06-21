@@ -740,14 +740,19 @@ pub(super) async fn force_join_room(
 	&self,
 	user_id: String,
 	room_id: OwnedRoomOrAliasId,
+	via: Option<String>,
 ) -> Result {
 	let user_id = parse_local_user_id(self.services, &user_id)?;
-	let (room_id, servers) = self
+	let (room_id, mut servers) = self
 		.services
 		.rooms
 		.alias
 		.resolve_with_servers(&room_id, None)
 		.await?;
+	if let Some(via) = via.map(ServerName::parse).transpose()? {
+		servers.retain(|n| *n != via);
+		servers.insert(0, via);
+	}
 
 	assert!(
 		self.services.globals.user_is_local(&user_id),

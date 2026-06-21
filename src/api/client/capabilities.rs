@@ -50,7 +50,7 @@ pub(crate) async fn get_capabilities_route(
 
 	if services
 		.users
-		.is_admin(body.sender_user.as_ref().unwrap())
+		.is_admin(body.identity.expect_sender_user()?)
 		.await
 	{
 		// Advertise suspension API
